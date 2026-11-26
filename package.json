@@ -1,0 +1,22 @@
+{
+  "name": "pub-quiz",
+  "private": true,
+  "description": "A live pub quiz: the quiz runs on a TV, teams play on their phones.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently --names server,web --prefix-colors magenta,cyan \"npm run dev -w @pub-quiz/server\" \"npm run dev -w @pub-quiz/web\"",
+    "test": "npm run test -w @pub-quiz/server",
+    "test:e2e": "npm run test:e2e -w @pub-quiz/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint -w @pub-quiz/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
