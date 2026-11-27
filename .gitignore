@@ -29,3 +29,6 @@ playwright/.cache/
 *.pem
 npm-debug.log*
 .vercel
+
+# local database files
+.data/

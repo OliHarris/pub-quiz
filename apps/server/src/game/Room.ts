@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import {
   MAX_PLAYERS_PER_ROOM,
+  rankPlayers,
   type Phase,
   type PublicPlayer,
   type Quiz,
   type RevealInfo,
   type RoomState,
+  type TeamResult,
 } from '@pub-quiz/shared';
 import { secretsMatch } from '../security';
 import { scoreAnswer } from './scoring';
@@ -65,6 +67,15 @@ export class Room {
 
   get currentPhase(): Phase {
     return this.phase;
+  }
+
+  get quizTitle(): string {
+    return this.quiz.title;
+  }
+
+  /** Every team's final score and position, for saving once the quiz is over. */
+  finalStandings(): TeamResult[] {
+    return rankPlayers([...this.players.values()]).map(({ name, score, rank }) => ({ name, score, rank }));
   }
 
   // ─── Teams ──────────────────────────────────────────────────────────────

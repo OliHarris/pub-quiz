@@ -13,8 +13,11 @@ export type AckResult<T extends object = object> = ({ ok: true } & T) | { ok: fa
 export type Ack<T extends object = object> = (result: AckResult<T>) => void;
 
 export interface ClientToServerEvents {
-  /** The TV screen asks for a new room. */
-  'host:create': (ack: Ack<{ code: string; hostToken: string }>) => void;
+  /**
+   * The TV screen asks for a new room to play a quiz: one of the host's saved
+   * quizzes (by id), or the built-in "sample" quiz.
+   */
+  'host:create': (payload: { quizId: string }, ack: Ack<{ code: string; hostToken: string }>) => void;
   /** The TV screen reconnects (after a refresh or Wi-Fi blip) using its secret host token. */
   'host:resume': (payload: { code: string; hostToken: string }, ack: Ack) => void;
   /** The host starts the quiz. */
@@ -41,8 +44,18 @@ export interface ServerToClientEvents {
   'room:state': (state: RoomState) => void;
 }
 
+/**
+ * What a screen sends when it first connects (Socket.IO's "handshake").
+ * Host screens include their host key so the server knows whose quizzes they can play.
+ */
+export interface HandshakeAuth {
+  hostKey?: string;
+}
+
 /** Extra data the server remembers about each connection. */
 export interface SocketData {
+  /** Set at connection time if the screen proved it's a host (see HandshakeAuth). */
+  hostId?: string;
   code?: string;
   role?: 'host' | 'player';
   playerId?: string;

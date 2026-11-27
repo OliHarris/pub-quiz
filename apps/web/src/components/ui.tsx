@@ -177,3 +177,23 @@ export function PrimaryButton({
     </button>
   );
 }
+
+/* Shared class names for elements that aren't PrimaryButton, e.g. links styled as buttons. */
+export const primaryButtonClass =
+  "inline-flex items-center justify-center gap-2 rounded-full bg-brass px-6 py-3 font-display text-base font-bold text-felt shadow-[0_5px_0_rgb(0_0_0/0.3)] transition hover:brightness-110 active:translate-y-0.5 active:shadow-[0_2px_0_rgb(0_0_0/0.3)] disabled:cursor-not-allowed disabled:opacity-40";
+export const secondaryButtonClass =
+  "inline-flex items-center justify-center gap-2 rounded-full border-2 border-felt-lighter px-5 py-2.5 font-semibold text-chalk transition hover:border-chalk-dim disabled:cursor-not-allowed disabled:opacity-40";
+export const smallButtonClass =
+  "inline-flex items-center justify-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40";
+export const cardClass = "rounded-[1.75rem] bg-felt-light p-6 sm:p-7";
+export const inputClass =
+  "w-full rounded-xl border-2 border-felt-lighter bg-felt px-4 py-2.5 text-chalk placeholder:text-chalk-dim/50 focus:border-brass focus:outline-none aria-[invalid=true]:border-incorrect";
+
+export function FieldError({ message, id }: { message?: string; id?: string }) {
+  if (!message) return null;
+  return (
+    <p id={id} className="mt-1.5 text-sm font-semibold text-incorrect">
+      {message}
+    </p>
+  );
+}
