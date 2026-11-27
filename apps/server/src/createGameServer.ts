@@ -1,65 +1,110 @@
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
 import { Server, type Socket } from 'socket.io';
 import {
   answerPayloadSchema,
+  hostCreatePayloadSchema,
   hostResumePayloadSchema,
   joinPayloadSchema,
   playerResumePayloadSchema,
   sampleQuiz,
+  SAMPLE_QUIZ_ID,
   type Ack,
   type AckResult,
   type ClientToServerEvents,
+  type HandshakeAuth,
+  type Quiz,
   type ServerToClientEvents,
   type SocketData,
 } from '@pub-quiz/shared';
 import type { ZodType } from 'zod';
+import { createApiApp } from './api/app';
+import type { Database } from './db/client';
 import type { Result, Room } from './game/Room';
 import { RoomManager } from './game/RoomManager';
-import { lanAddresses } from './lan';
+import { saveGame } from './repositories/games';
+import { findHostIdByKey } from './repositories/hosts';
+import { getQuiz } from './repositories/quizzes';
 import { secretsMatch } from './security';
 
 type GameIo = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
 
 export interface GameServerOptions {
+  db: Database;
   /** Which websites may connect. `true` allows any (fine for development only). */
   corsOrigin?: string[] | true;
   /** Close rooms after this long with no activity. */
   idleRoomMs?: number;
   /** Serve this machine's network addresses at /lan (development only). */
   exposeLan?: boolean;
+  /** How many hosts one IP address may create per 15 minutes. */
+  hostsPerWindow?: number;
+}
+
+/** What the server remembers about each room besides the game itself. */
+interface RoomInfo {
+  hostId: string;
+  quizId: string | null;
+  resultsSaved: boolean;
 }
 
 /**
- * Builds the game server without starting it, so tests can start it on any
- * free port and real use can start it on port 4000.
+ * Builds the whole back-end without starting it, so tests can start it on any
+ * free port and real use can start it on port 4000:
  *
- * This file is the "network layer": it turns WebSocket messages into calls on
- * a Room, and pushes the Room's state back out. The game rules live in Room.
+ *   one HTTP server
+ *    ├─ Express: the REST API (/api/...) and /health
+ *    └─ Socket.IO: live games over WebSockets
+ *
+ * This file is the "network layer" for games: it turns WebSocket messages into
+ * calls on a Room, and pushes the Room's state back out. The game rules live in Room.
  */
-export function createGameServer(options: GameServerOptions = {}) {
-  const { corsOrigin = true, idleRoomMs = 2 * 60 * 60 * 1000, exposeLan = false } = options;
+export function createGameServer(options: GameServerOptions) {
+  const { db, corsOrigin = true, idleRoomMs = 2 * 60 * 60 * 1000, exposeLan = false, hostsPerWindow } = options;
 
-  // Plain HTTP endpoints. Socket.IO answers its own /socket.io/ requests before these.
-  const httpServer = createServer((req, res) => {
-    const { pathname } = new URL(req.url ?? '/', 'http://localhost');
-    if (pathname === '/health') return sendJson(res, 200, { ok: true, rooms: rooms.size });
-    if (pathname === '/lan' && exposeLan) return sendJson(res, 200, { addresses: lanAddresses() });
-    sendJson(res, 404, { error: 'Not found' });
-  });
-
+  const app = createApiApp({ db, corsOrigin, exposeLan, hostsPerWindow, roomCount: () => rooms.size });
+  const httpServer = createServer(app);
   const io: GameIo = new Server(httpServer, { cors: { origin: corsOrigin } });
+  const roomInfo = new Map<string, RoomInfo>();
 
   // Whenever a room changes, send its new state to every screen in that room.
   const rooms = new RoomManager((room) => {
     io.to(room.code).emit('room:state', room.toPublicState());
+    if (room.currentPhase === 'finished') void saveResults(room);
+  });
+
+  /**
+   * Runs once per connection, before any messages. Host screens send their
+   * host key in the handshake. If it's valid we remember which host this
+   * connection belongs to. Phones don't send one, and that's fine.
+   */
+  io.use(async (socket, next) => {
+    const { hostKey } = (socket.handshake.auth ?? {}) as HandshakeAuth;
+    if (typeof hostKey === 'string') {
+      try {
+        socket.data.hostId = (await findHostIdByKey(db, hostKey)) ?? undefined;
+      } catch (error) {
+        console.error('Host lookup failed', error);
+      }
+    }
+    next();
   });
 
   io.on('connection', (socket) => {
     // ── Host (TV screen) ──
-    socket.on('host:create', (ack) =>
-      handle(ack, () => {
-        const room = rooms.create(sampleQuiz);
+    socket.on('host:create', (payload, ack) =>
+      handle(ack, async () => {
+        const hostId = socket.data.hostId;
+        if (!hostId) return { ok: false, error: 'Reload the page to host a game' };
+        const data = parse(hostCreatePayloadSchema, payload);
+        if (!data.ok) return data;
+
+        const { quizId } = data.value;
+        const quiz: Quiz | null = quizId === SAMPLE_QUIZ_ID ? sampleQuiz : await getQuiz(db, quizId, hostId);
+        if (!quiz) return { ok: false, error: "That quiz doesn't exist" };
+
+        const room = rooms.create(quiz);
+        roomInfo.set(room.code, { hostId, quizId: quizId === SAMPLE_QUIZ_ID ? null : quizId, resultsSaved: false });
         joinRoom(socket, room, 'host');
         return { ok: true, code: room.code, hostToken: room.hostToken };
       }),
@@ -128,7 +173,7 @@ export function createGameServer(options: GameServerOptions = {}) {
     const { code, role: oldRole, playerId: oldPlayerId } = socket.data;
     const alreadyHere = code === room.code && oldRole === role && oldPlayerId === playerId;
     if (!alreadyHere) leaveRoom(socket);
-    socket.data = { code: room.code, role, playerId };
+    Object.assign(socket.data, { code: room.code, role, playerId });
     void socket.join(room.code);
     socket.emit('room:state', room.toPublicState());
   }
@@ -138,7 +183,8 @@ export function createGameServer(options: GameServerOptions = {}) {
     if (!code) return;
     if (role === 'player' && playerId) rooms.get(code)?.detachSocket(playerId, socket.id);
     void socket.leave(code);
-    socket.data = {};
+    // Forget the room, but keep hostId: that belongs to the connection, not the room.
+    socket.data.code = socket.data.role = socket.data.playerId = undefined;
   }
 
   function hostRoom(socket: GameSocket): Room | undefined {
@@ -146,14 +192,35 @@ export function createGameServer(options: GameServerOptions = {}) {
     return role === 'host' && code ? rooms.get(code) : undefined;
   }
 
-  const sweeper = setInterval(() => rooms.sweep(idleRoomMs), 60_000);
+  /** When a quiz finishes, save everyone's results so the host can look back at them. */
+  async function saveResults(room: Room) {
+    const info = roomInfo.get(room.code);
+    if (!info || info.resultsSaved) return;
+    info.resultsSaved = true; // set first, so a second change while saving doesn't save twice
+    try {
+      await saveGame(db, {
+        hostId: info.hostId,
+        quizId: info.quizId,
+        quizTitle: room.quizTitle,
+        roomCode: room.code,
+        teams: room.finalStandings(),
+      });
+    } catch (error) {
+      info.resultsSaved = false;
+      console.error(`Could not save results for room ${room.code}`, error);
+    }
+  }
+
+  const sweeper = setInterval(() => {
+    for (const code of rooms.sweep(idleRoomMs)) roomInfo.delete(code);
+  }, 60_000);
   sweeper.unref();
   httpServer.on('close', () => {
     clearInterval(sweeper);
     rooms.disposeAll();
   });
 
-  return { httpServer, io, rooms };
+  return { httpServer, io, rooms, app };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -163,10 +230,10 @@ export function createGameServer(options: GameServerOptions = {}) {
  * error inside a socket handler would otherwise crash the whole server and end
  * every game.
  */
-function handle<T extends object>(ack: Ack<T>, fn: () => AckResult<T>): void {
+async function handle<T extends object>(ack: Ack<T>, fn: () => AckResult<T> | Promise<AckResult<T>>): Promise<void> {
   let result: AckResult<T>;
   try {
-    result = fn();
+    result = await fn();
   } catch (error) {
     console.error('Handler failed', error);
     result = { ok: false, error: 'Something went wrong on our side' };
@@ -186,13 +253,4 @@ function asAck(room: Room | undefined, action: (room: Room) => Result): AckResul
   if (!room) return { ok: false, error: 'You are not hosting a game' };
   const result = action(room);
   return result.ok ? { ok: true } : result;
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    // Only harmless, public information is served here, so any site may read it.
-    'Access-Control-Allow-Origin': '*',
-  });
-  res.end(JSON.stringify(body));
 }

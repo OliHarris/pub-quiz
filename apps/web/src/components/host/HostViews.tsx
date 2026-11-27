@@ -1,9 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import type { RoomState } from "@pub-quiz/shared";
-import { formatPoints, ordinal, rankPlayers } from "@/lib/ranking";
+import { formatPoints, ordinal, rankPlayers } from "@pub-quiz/shared";
 import { useCountdown } from "@/lib/useCountdown";
 import { CountdownRing, OptionTile, PrimaryButton, RoomCode } from "../ui";
 
@@ -213,7 +214,7 @@ export function HostLeaderboard({ room, ...next }: NextProps & { room: RoomState
 
 // ─── Finished ───────────────────────────────────────────────────────────────
 
-export function HostFinished({ room, onNewGame }: { room: RoomState; onNewGame: () => void }) {
+export function HostFinished({ room, onPlayAgain }: { room: RoomState; onPlayAgain: () => void }) {
   const ranked = rankPlayers(room.players);
   const podium = [ranked[1], ranked[0], ranked[2]]; // 2nd, 1st, 3rd: winner in the middle
   const heights = ["h-[14vw]", "h-[20vw]", "h-[10vw]"];
@@ -249,7 +250,16 @@ export function HostFinished({ room, onNewGame }: { room: RoomState; onNewGame: 
             .join("  ·  ")}
         </p>
       )}
-      <PrimaryButton onClick={onNewGame}>Host another quiz</PrimaryButton>
+      <div className="flex items-center gap-4">
+        <PrimaryButton onClick={onPlayAgain}>Play this quiz again</PrimaryButton>
+        <Link
+          href="/host"
+          className="rounded-full border-2 border-chalk-dim/40 px-7 py-3 font-display text-lg font-bold transition hover:border-chalk"
+        >
+          Back to dashboard
+        </Link>
+      </div>
+      <p className="text-sm text-chalk-dim">Results are saved to your dashboard.</p>
     </div>
   );
 }

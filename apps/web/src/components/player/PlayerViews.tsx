@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import Link from "next/link";
 import { teamNameSchema, TEAM_NAME_MAX_LENGTH, type RoomState } from "@pub-quiz/shared";
-import { formatPoints, ordinal, rankPlayers } from "@/lib/ranking";
+import { formatPoints, ordinal, rankPlayers } from "@pub-quiz/shared";
 import { useCountdown } from "@/lib/useCountdown";
 import { OPTION_LETTERS, OptionTile, PrimaryButton, RoomCode } from "../ui";
 

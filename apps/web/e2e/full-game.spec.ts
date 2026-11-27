@@ -1,44 +1,15 @@
-import { devices, expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { sampleQuiz } from "@pub-quiz/shared";
+import { answer, joinAsTeam, openHost, roomCodeOf } from "./helpers";
 
 /**
  * A whole game, end to end: one host screen and three phones, each in its own
  * browser context (separate cookies and storage, like separate devices).
  */
 
-// A phone-sized, touch-screen browser.
-const pixel = devices["Pixel 7"];
-const phone = {
-  viewport: pixel.viewport,
-  userAgent: pixel.userAgent,
-  deviceScaleFactor: pixel.deviceScaleFactor,
-  isMobile: pixel.isMobile,
-  hasTouch: pixel.hasTouch,
-};
-const LETTERS = ["A", "B", "C", "D"];
-
-async function joinAsTeam(browser: Browser, code: string, name: string): Promise<Page> {
-  const context = await browser.newContext(phone);
-  const page = await context.newPage();
-  await page.goto(`/play/${code}`);
-  await page.getByLabel("Team name").fill(name);
-  await page.getByRole("button", { name: "Join" }).click();
-  await expect(page.getByRole("heading", { name: "You're in!" })).toBeVisible();
-  return page;
-}
-
-async function answer(page: Page, optionIndex: number, optionText: string) {
-  await page.getByRole("button", { name: `${LETTERS[optionIndex]}: ${optionText}`, exact: true }).click();
-}
-
 test("three teams play a full quiz, from joining to the final podium", async ({ browser }) => {
-  const hostContext = await browser.newContext({ viewport: { width: 1600, height: 900 } });
-  const host = await hostContext.newPage();
-  await host.goto("/host");
-
-  const roomCode = host.getByTestId("room-code");
-  await expect(roomCode).toHaveText(/^[A-Z]{4}$/);
-  const code = (await roomCode.textContent())!;
+  const host = await openHost(browser, "/host/live/sample");
+  const code = await roomCodeOf(host);
 
   const [bears, mockingbird, quizerables] = await Promise.all([
     joinAsTeam(browser, code, "The Quizzly Bears"),
@@ -84,11 +55,8 @@ test("three teams play a full quiz, from joining to the final podium", async ({ 
 });
 
 test("a phone that refreshes mid-game rejoins as the same team", async ({ browser }) => {
-  const host = await (await browser.newContext()).newPage();
-  await host.goto("/host");
-  const roomCode = host.getByTestId("room-code");
-  await expect(roomCode).toHaveText(/^[A-Z]{4}$/);
-  const code = (await roomCode.textContent())!;
+  const host = await openHost(browser, "/host/live/sample");
+  const code = await roomCodeOf(host);
 
   const phonePage = await joinAsTeam(browser, code, "The Quizzly Bears");
   await host.getByRole("button", { name: /Start the quiz/ }).click();

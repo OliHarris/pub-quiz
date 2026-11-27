@@ -35,6 +35,8 @@ export const playerSessionKey = (code: string) => `pubquiz:player:${code}`;
 export interface HostSession {
   code: string;
   hostToken: string;
+  /** Which quiz this room is playing, so opening a different quiz starts a new room. */
+  quizId: string;
 }
 
 export interface PlayerSession {

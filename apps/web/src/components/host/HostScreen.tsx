@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/api";
 import { gameServerUrl, request, REQUEST_TIMEOUT_MS, type GameSocket } from "@/lib/connection";
 import { HOST_SESSION_KEY, readJson, removeItem, writeJson, type HostSession } from "@/lib/storage";
 import { useGameConnection } from "@/lib/useGameConnection";
@@ -8,32 +11,40 @@ import { ConnectionDot, Logo, Splash, Toast } from "../ui";
 import { HostFinished, HostLeaderboard, HostLobby, HostQuestion } from "./HostViews";
 
 /**
- * The host's screen, meant for a TV or projector. It creates a room (or
- * reconnects to the one it already had) and shows the right view for each
- * phase of the game.
+ * The host's screen, meant for a TV or projector. It opens a room for the
+ * chosen quiz (or reconnects to the room it already had) and shows the right
+ * view for each phase of the game.
  */
-export function HostScreen() {
+export function HostScreen({ quizId }: { quizId: string }) {
   const [error, setError] = useState<string | null>(null);
+  const [fatalError, setFatalError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const queryClient = useQueryClient();
 
-  const { connection, status, room, clockOffset } = useGameConnection(async (socket) => {
-    // After a refresh or a dropped connection, carry on with the same game.
-    const saved = readJson<HostSession>(HOST_SESSION_KEY);
-    if (saved) {
-      const resumed = await request(() => socket.timeout(REQUEST_TIMEOUT_MS).emitWithAck("host:resume", saved));
-      if (resumed.ok) return;
+  const { connection, status, room, clockOffset } = useGameConnection(
+    async (socket) => {
+      // After a refresh or a dropped connection, carry on with the same game,
+      // as long as it's for this quiz.
+      const saved = readJson<HostSession>(HOST_SESSION_KEY);
+      if (saved && saved.quizId === quizId) {
+        const resumed = await request(() =>
+          socket.timeout(REQUEST_TIMEOUT_MS).emitWithAck("host:resume", { code: saved.code, hostToken: saved.hostToken }),
+        );
+        if (resumed.ok) return;
+      }
       removeItem(HOST_SESSION_KEY);
-    }
-    await createRoom(socket);
-  });
+      await createRoom(socket);
+    },
+    { asHost: true },
+  );
 
   const joinUrl = useJoinUrl(room?.code);
 
   async function createRoom(socket: GameSocket) {
-    const created = await request(() => socket.timeout(REQUEST_TIMEOUT_MS).emitWithAck("host:create"));
-    if (created.ok) writeJson(HOST_SESSION_KEY, { code: created.code, hostToken: created.hostToken });
-    else setError(created.error);
+    const created = await request(() => socket.timeout(REQUEST_TIMEOUT_MS).emitWithAck("host:create", { quizId }));
+    if (created.ok) writeJson(HOST_SESSION_KEY, { code: created.code, hostToken: created.hostToken, quizId });
+    else setFatalError(created.error);
   }
 
   async function advance() {
@@ -52,10 +63,16 @@ export function HostScreen() {
     if (!result.ok) setError(result.error);
   }
 
-  function startNewGame() {
+  function playAgain() {
     removeItem(HOST_SESSION_KEY);
     void createRoom(connection.io);
   }
+
+  // When the quiz ends, the server saves the results; refresh the dashboard's list of past games.
+  const phase = room?.phase;
+  useEffect(() => {
+    if (phase === "finished") void queryClient.invalidateQueries({ queryKey: queryKeys.games });
+  }, [phase, queryClient]);
 
   // Space, Enter or → moves the game on, so the host can run it from a keyboard.
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
@@ -77,6 +94,15 @@ export function HostScreen() {
     return () => clearTimeout(id);
   }, [error]);
 
+  if (fatalError) {
+    return (
+      <Splash title="Couldn't start the game" detail={fatalError}>
+        <Link href="/host" className="text-brass underline underline-offset-4">
+          Back to dashboard
+        </Link>
+      </Splash>
+    );
+  }
   if (!room) {
     return status === "reconnecting" ? (
       <Splash
@@ -94,7 +120,9 @@ export function HostScreen() {
     <div className="flex min-h-dvh flex-col px-[3vw] py-[2vw]">
       <header className="mb-[2vw] flex items-center justify-between gap-6">
         <div className="flex items-baseline gap-4">
-          <Logo className="text-[clamp(1.1rem,1.6vw,1.9rem)] text-brass" />
+          <Link href="/host" title="Back to dashboard">
+            <Logo className="text-[clamp(1.1rem,1.6vw,1.9rem)] text-brass" />
+          </Link>
           <span className="text-[clamp(1rem,1.4vw,1.6rem)] text-chalk-dim">{room.quizTitle}</span>
         </div>
         <ConnectionDot status={status} />
@@ -106,7 +134,7 @@ export function HostScreen() {
           <HostQuestion room={room} clockOffset={clockOffset} {...nextProps} />
         )}
         {room.phase === "leaderboard" && <HostLeaderboard room={room} {...nextProps} />}
-        {room.phase === "finished" && <HostFinished room={room} onNewGame={startNewGame} />}
+        {room.phase === "finished" && <HostFinished room={room} onPlayAgain={playAgain} />}
       </main>
 
       {error && <Toast>{error}</Toast>}

@@ -9,6 +9,7 @@ import { GameConnection, type GameSocket } from "./connection";
  */
 export function useGameConnection(
   onConnect: (socket: GameSocket, connection: GameConnection) => void | Promise<void>,
+  { asHost = false }: { asHost?: boolean } = {},
 ) {
   const [connection] = useState(() => new GameConnection());
   // Always calls the latest onConnect without reconnecting when it changes.
@@ -17,9 +18,9 @@ export function useGameConnection(
   });
 
   useEffect(() => {
-    connection.start((socket) => handleConnect(socket));
+    connection.start((socket) => handleConnect(socket), { asHost });
     return () => connection.stop();
-  }, [connection]);
+  }, [connection, asHost]);
 
   const snapshot = useSyncExternalStore(
     connection.subscribe,

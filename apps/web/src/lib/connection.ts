@@ -1,5 +1,9 @@
 import { io, type Socket } from "socket.io-client";
-import type { AckResult, ClientToServerEvents, RoomState, ServerToClientEvents } from "@pub-quiz/shared";
+import type { AckResult, ClientToServerEvents, HandshakeAuth, RoomState, ServerToClientEvents } from "@pub-quiz/shared";
+import { getHostKey } from "./api";
+import { gameServerUrl } from "./config";
+
+export { gameServerUrl };
 
 export type GameSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 export type ConnectionStatus = "connecting" | "connected" | "reconnecting";
@@ -13,12 +17,6 @@ export interface ConnectionSnapshot {
 }
 
 const INITIAL: ConnectionSnapshot = { status: "connecting", room: null, clockOffset: 0 };
-
-/** Where the game server lives. In development it's the same machine on port 4000. */
-export function gameServerUrl(): string {
-  if (process.env.NEXT_PUBLIC_GAME_SERVER_URL) return process.env.NEXT_PUBLIC_GAME_SERVER_URL;
-  return `${window.location.protocol}//${window.location.hostname}:4000`;
-}
 
 /**
  * Owns the WebSocket connection and the latest room state, outside React.
@@ -42,11 +40,23 @@ export class GameConnection {
   getSnapshot = () => this.snapshot;
   getServerSnapshot = () => INITIAL;
 
-  /** Connect. `onConnect` runs on the first connection and again after every reconnect. */
-  start(onConnect: (socket: GameSocket) => void): void {
-    // Go straight to WebSockets rather than starting with slower HTTP polling.
-    // It also means that later, several copies of the server won't need "sticky sessions".
-    const socket: GameSocket = io(gameServerUrl(), { transports: ["websocket"], autoConnect: false });
+  /**
+   * Connect. `onConnect` runs on the first connection and again after every reconnect.
+   * Host screens (`asHost`) prove who they are by sending their host key in the handshake.
+   */
+  start(onConnect: (socket: GameSocket) => void, { asHost = false } = {}): void {
+    const socket: GameSocket = io(gameServerUrl(), {
+      // Go straight to WebSockets rather than starting with slower HTTP polling.
+      // It also means that later, several copies of the server won't need "sticky sessions".
+      transports: ["websocket"],
+      autoConnect: false,
+      // A function, so it runs again on every reconnect and always sends the current key.
+      auth: asHost
+        ? (send: (auth: HandshakeAuth) => void) => {
+            getHostKey().then((hostKey) => send({ hostKey }), () => send({}));
+          }
+        : undefined,
+    });
     this.socket = socket;
 
     socket.on("connect", () => {

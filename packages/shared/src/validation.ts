@@ -10,10 +10,11 @@ import { z } from 'zod';
 
 /**
  * Room codes use consonants only. With no vowels, a random code can't spell
- * a word, rude or otherwise. I and O are already out, so nobody mixes them
- * up with 1 and 0.
+ * a word, rude or otherwise. That also rules out I and O, which get mixed up
+ * with 1 and 0. Q is out too: in the TV's display font it looks like an O.
+ * 19 letters, 4 at a time, still gives 130,321 possible codes.
  */
-export const ROOM_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ';
+export const ROOM_CODE_ALPHABET = 'BCDFGHJKLMNPRSTVWXZ';
 export const ROOM_CODE_LENGTH = 4;
 export const TEAM_NAME_MAX_LENGTH = 24;
 export const MAX_PLAYERS_PER_ROOM = 50;
@@ -33,6 +34,10 @@ export const teamNameSchema = z
 
 const tokenSchema = z.string().min(10).max(100);
 
+export const SAMPLE_QUIZ_ID = 'sample';
+export const hostCreatePayloadSchema = z.object({
+  quizId: z.union([z.literal(SAMPLE_QUIZ_ID), z.uuid("That quiz doesn't exist")]),
+});
 export const joinPayloadSchema = z.object({ code: roomCodeSchema, name: teamNameSchema });
 export const playerResumePayloadSchema = z.object({ code: roomCodeSchema, playerToken: tokenSchema });
 export const hostResumePayloadSchema = z.object({ code: roomCodeSchema, hostToken: tokenSchema });
